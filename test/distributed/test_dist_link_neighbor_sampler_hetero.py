@@ -23,7 +23,8 @@ from torch_geometric.testing import withPackage
 from torch_geometric.typing import EdgeType, Optional
 
 
-def create_hetero_data(tmp_path: str, rank: int, time_attr: Optional[str] = None):
+def create_hetero_data(tmp_path: str, rank: int,
+                       time_attr: Optional[str] = None):
     graph_store = LocalGraphStore.from_partition(tmp_path, pid=rank)
     # Other partition graph store:
     graph_store_other = LocalGraphStore.from_partition(tmp_path,
@@ -91,12 +92,11 @@ def dist_link_neighbor_sampler_hetero(
         group_name='dist-sampler-test',
     )
 
-    num_neighbors = [-1, -1]
     dist_sampler = DistNeighborSampler(
         data=dist_data,
         current_ctx=current_ctx,
         rpc_worker_names={},
-        num_neighbors=num_neighbors,
+        num_neighbors=[-1, -1],
         shuffle=False,
         disjoint=disjoint,
     )
@@ -143,7 +143,7 @@ def dist_link_neighbor_sampler_hetero(
 
     sampler = NeighborSampler(
         data=data,
-        num_neighbors=num_neighbors,
+        num_neighbors=[-1, -1],
         disjoint=disjoint,
     )
 
@@ -153,8 +153,6 @@ def dist_link_neighbor_sampler_hetero(
         sampler._sample,
         data.num_nodes,
         disjoint,
-        node_time=None,
-        neg_sampling=None,
     )
 
     # Compare distributed output with single machine output:
@@ -173,8 +171,12 @@ def dist_link_neighbor_sampler_temporal_hetero(
     rank: int,
     master_port: int,
     input_type: EdgeType,
+    seed_time: torch.tensor = None,
+    temporal_strategy: str = 'uniform',
+    time_attr: str = 'time',
 ):
-    dist_data, graph_store_other = create_hetero_data(tmp_path, rank)
+    dist_data, graph_store_other = create_hetero_data(tmp_path, rank,
+                                                      time_attr)
 
     current_ctx = DistContext(
         rank=rank,
@@ -184,14 +186,15 @@ def dist_link_neighbor_sampler_temporal_hetero(
         group_name='dist-sampler-test',
     )
 
-    num_neighbors = [-1, -1]
     dist_sampler = DistNeighborSampler(
         data=dist_data,
         current_ctx=current_ctx,
         rpc_worker_names={},
-        num_neighbors=num_neighbors,
+        num_neighbors=[-1, -1],
         shuffle=False,
         disjoint=True,
+        temporal_strategy=temporal_strategy,
+        time_attr=time_attr,
     )
 
     # close RPC & worker group at exit:
@@ -227,6 +230,7 @@ def dist_link_neighbor_sampler_temporal_hetero(
         input_id=None,
         row=input_row,
         col=input_col,
+        time=seed_time,
         input_type=input_type,
     )
 
@@ -236,8 +240,10 @@ def dist_link_neighbor_sampler_temporal_hetero(
 
     sampler = NeighborSampler(
         data=data,
-        num_neighbors=num_neighbors,
+        num_neighbors=[-1, -1],
         disjoint=True,
+        temporal_strategy=temporal_strategy,
+        time_attr=time_attr,
     )
 
     # Evaluate edge sample function:
@@ -245,8 +251,8 @@ def dist_link_neighbor_sampler_temporal_hetero(
         inputs,
         sampler._sample,
         data.num_nodes,
-        True,
-        node_time=None,
+        disjoint=True,
+        node_time=seed_time,
         neg_sampling=None,
     )
 
@@ -261,10 +267,10 @@ def dist_link_neighbor_sampler_temporal_hetero(
 @pytest.mark.parametrize('disjoint', [False, True])
 def test_dist_link_neighbor_sampler_hetero(tmp_path, disjoint):
     mp_context = torch.multiprocessing.get_context('spawn')
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1)
+        s.bind(('127.0.0.1', 0))
+        port = s.getsockname()[1]
 
     world_size = 2
     data = FakeHeteroDataset(
@@ -298,18 +304,18 @@ def test_dist_link_neighbor_sampler_hetero(tmp_path, disjoint):
 
 
 @withPackage('pyg_lib')
-@pytest.mark.parametrize('seed_time', [None, [0, 0], [1, 1], [3, 3]])
+@pytest.mark.parametrize('seed_time', [[0, 0], [1, 1], [3, 3]])
 @pytest.mark.parametrize('temporal_strategy', ['uniform', 'last'])
-def test_dist_link_neighbor_sampler_temporal_hetero(tmp_path, seed_time,
-                                               temporal_strategy):
+def test_dist_link_neighbor_sampler_edge_level_temporal_hetero(
+        tmp_path, seed_time, temporal_strategy):
     if seed_time is not None:
         seed_time = torch.tensor(seed_time)
 
     mp_context = torch.multiprocessing.get_context('spawn')
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.settimeout(1)
+        s.bind(('127.0.0.1', 0))
+        port = s.getsockname()[1]
 
     world_size = 2
     data = FakeHeteroDataset(
@@ -325,20 +331,20 @@ def test_dist_link_neighbor_sampler_temporal_hetero(tmp_path, seed_time,
     partitioner.generate_partition()
 
     # Add time information to data after generating partitions (support TBD)
-    data['v0'].time = torch.ones(data.num_nodes_dict['v0'], dtype=torch.int64)
-    data['v1'].time = torch.full((data.num_nodes_dict['v1'], ), 2,
-                                 dtype=torch.int64)
+    for i, edge_type in enumerate(data.edge_types):
+        data[edge_type].edge_time = torch.full(
+            (data[edge_type].edge_index.size(1), ), i, dtype=torch.int64)
 
     w0 = mp_context.Process(
         target=dist_link_neighbor_sampler_temporal_hetero,
-        args=(data, tmp_path, world_size, 0, port, 'v0', seed_time,
-              temporal_strategy, 'time'),
+        args=(data, tmp_path, world_size, 0, port, ('v0', 'e0', 'v0'),
+              seed_time, temporal_strategy, 'edge_time'),
     )
 
     w1 = mp_context.Process(
         target=dist_link_neighbor_sampler_temporal_hetero,
-        args=(data, tmp_path, world_size, 1, port, 'v1', seed_time,
-              temporal_strategy, 'time'),
+        args=(data, tmp_path, world_size, 1, port, ('v1', 'e0', 'v0'),
+              seed_time, temporal_strategy, 'edge_time'),
     )
 
     w0.start()

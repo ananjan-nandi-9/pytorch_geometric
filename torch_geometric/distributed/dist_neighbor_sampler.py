@@ -212,21 +212,25 @@ class DistNeighborSampler:
         if isinstance(inputs, NodeSamplerInput):
             seed = inputs.node.to(self.device)
             batch_size = len(inputs.node)
+            seed_batch = torch.arange(len(seed)) if self.disjoint else None
+
             metadata = (inputs.input_id, inputs.time, batch_size)
-        else:  # isinstance(inputs, DistEdgeHeteroSamplerInput)
+
+            seed_time: Optional[Tensor] = None
+            if self.temporal:
+                if inputs.time is not None:
+                    seed_time = inputs.time.to(self.device)
+                elif self.node_time is not None:
+                    seed_time = self.node_time[
+                        seed] if not self.is_hetero else self.node_time[
+                            input_type][seed]
+                else:
+                    raise ValueError("Seed time needs to be specified")
+        else:  # DistEdgeHeteroSamplerInput
             # Metadata is added in the :obj:`edge_sample` function.
             metadata = None
 
-        seed_time: Optional[Tensor] = None
-        if self.temporal:
-            if inputs.time is not None:
-                seed_time = inputs.time.to(self.device)
-            elif self.node_time is not None:
-                seed_time = self.node_time[
-                    seed] if not self.is_hetero else self.node_time[
-                        input_type][seed]
-            else:
-                raise ValueError("Seed time needs to be specified")
+        # Heterogeneus Neighborhood Sampling ##################################
 
         if self.is_hetero:
             if input_type is None:
@@ -242,7 +246,14 @@ class DistNeighborSampler:
 
             else:  # isinstance(inputs, DistEdgeHeteroSamplerInput)
                 seed_dict = inputs.node_dict
-                seed_time_dict = inputs.time_dict
+                if self.temporal:
+                    for k, v in inputs.node_dict.items():
+                        if inputs.time_dict is not None:
+                            node_dict.seed_time[k][0] = inputs.time_dict[k]
+                        elif self.node_time is not None:
+                            node_dict.seed_time[k][0] = self.node_time[k][v]
+                        else:
+                            raise ValueError("Seed time needs to be specified")
 
             edge_dict: Dict[EdgeType, Tensor] = defaultdict()
             edge_dict.update((k, torch.empty(0, dtype=torch.int64))
@@ -286,9 +297,6 @@ class DistNeighborSampler:
                         # current layer.
                         num_sampled_edges_dict[edge_type].append(0)
                         continue
-
-                    # seed_time = (seed_time_dict.get(src, None)
-                    #              if seed_time_dict is not None else None)
 
                     if isinstance(self.num_neighbors, list):
                         one_hop_num = self.num_neighbors[i]
@@ -343,15 +351,22 @@ class DistNeighborSampler:
                         batch_dict.with_dupl[dst] = torch.cat(
                             [batch_dict.with_dupl[dst], out.batch])
 
-                    print(batch_dict.src)
                     if self.temporal and i < self.num_hops - 1:
-                        # Get the seed time for the next layer based on the
-                        # previous seed_time and sampled neighbors per node
-                        # info:
+                        # Assign seed time for every src node based its
+                        # subgraph ID.
                         src_seed_time = batch_src.clone()
-                        for batch_idx, time in enumerate(seed_time):
-                            mask = batch_src == batch_idx
-                            src_seed_time[mask] = time
+
+                        if isinstance(inputs, NodeSamplerInput):
+                            for batch_idx, time in enumerate(seed_time):
+                                mask = batch_src == batch_idx
+                                src_seed_time[mask] = time
+
+                        else:  # DistEdgeHeteroSamplerInput
+                            for k, v in batch_dict.src.items():
+                                for idx, batch_idx in enumerate(v[0]):
+                                    time = node_dict.seed_time[k][0][idx]
+                                    mask = batch_src == batch_idx
+                                    src_seed_time[mask] = time
 
                         node_dict.seed_time[dst][i + 1] = torch.cat(
                             [node_dict.seed_time[dst][i + 1], src_seed_time])
@@ -392,12 +407,15 @@ class DistNeighborSampler:
                 num_sampled_edges=num_sampled_edges_dict,
                 metadata=metadata,
             )
+
+        # Homogeneus Neighborhood Sampling ####################################
+
         else:
             src = seed
             node = src.clone()
 
-            src_batch = torch.arange(len(seed)) if self.disjoint else None
-            batch = src_batch.clone() if self.disjoint else None
+            src_batch = seed_batch.clone() if self.disjoint else None
+            batch = seed_batch.clone() if self.disjoint else None
 
             src_seed_time = seed_time.clone() if self.temporal else None
 
@@ -424,8 +442,6 @@ class DistNeighborSampler:
                 src, node, src_batch, batch = remove_duplicates(
                     out, node, batch, self.disjoint)
 
-                print(src_batch)
-
                 node_with_dupl.append(out.node)
                 edge.append(out.edge)
 
@@ -435,11 +451,10 @@ class DistNeighborSampler:
                 if self.temporal and i < self.num_hops - 1:
                     # Assign seed time for every src node based its subgraph
                     # ID.
-                    src_seed_time = src_batch.clone()
-                    for batch_idx, time in enumerate(seed_time):
-                        mask = src_batch == batch_idx
-                        src_seed_time[mask] = time
-                    
+                    src_seed_time = torch.Tensor([
+                        seed_time[(seed_batch == batch_idx).nonzero()]
+                        for batch_idx in src_batch
+                    ]).to(torch.int64)
 
                 num_sampled_nodes.append(len(src))
                 num_sampled_edges.append(len(out.node))
@@ -927,12 +942,6 @@ class DistNeighborSampler:
             edge_time = self.edge_time.get(edge_type,
                                            None) if self.edge_time else None
 
-        # print(
-        #     f'edge_type={edge_type}, seed_time={seed_time}, edge_time={edge_time}, node_time={node_time}'
-        # )
-        # print(
-        #     f'colptr={colptr}, row={row}'
-        # )
         out = torch.ops.pyg.dist_neighbor_sample(
             colptr,
             row,

@@ -105,7 +105,7 @@ def dist_link_neighbor_loader_hetero(
     num_workers: int,
     async_sampling: bool,
     neg_ratio: float,
-    edge_type: Tuple[str, str, str],
+    input_type: Tuple[str, str, str],
 ):
     part_data = create_dist_data(tmp_path, rank)
     current_ctx = DistContext(
@@ -116,12 +116,12 @@ def dist_link_neighbor_loader_hetero(
         group_name="dist-loader-test",
     )
 
-    edge_label_index = part_data[1].get_edge_index(edge_type, 'coo')
+    edge_label_index = part_data[1].get_edge_index(input_type, 'coo')
     edge_label = torch.randint(high=2, size=(edge_label_index.size(1), ))
 
     loader = DistLinkNeighborLoader(
         data=part_data,
-        edge_label_index=(edge_type, edge_label_index),
+        edge_label_index=(input_type, edge_label_index),
         edge_label=edge_label if neg_ratio is not None else None,
         num_neighbors=[1],
         batch_size=10,
@@ -142,8 +142,8 @@ def dist_link_neighbor_loader_hetero(
 
     for batch in loader:
         assert isinstance(batch, HeteroData)
-        assert (batch[edge_type].input_id.numel() ==
-                batch[edge_type].batch_size == 10)
+        assert (batch[input_type].input_id.numel() ==
+                batch[input_type].batch_size == 10)
 
         assert len(batch.node_types) == 2
         for node_type in batch.node_types:
@@ -153,8 +153,9 @@ def dist_link_neighbor_loader_hetero(
 
         assert len(batch.edge_types) == 4
         for edge_type in batch.edge_types:
-            assert (batch[edge_type].edge_attr.size(0) ==
-                    batch[edge_type].edge_index.size(1))
+            num_edges = batch[edge_type].edge_index.size(1)
+            if num_edges > 0:
+                assert (batch[edge_type].edge_attr.size(0) == num_edges)
 
 
 @onlyLinux
@@ -210,15 +211,14 @@ def test_dist_link_neighbor_loader_homo(
 @pytest.mark.parametrize('num_workers', [0])
 @pytest.mark.parametrize('async_sampling', [True])
 @pytest.mark.parametrize('neg_ratio', [None])
-@pytest.mark.parametrize('edge_type', [('v0', 'e0', 'v0')])
-@pytest.mark.skip(reason="'sample_from_edges' not yet implemented")
+@pytest.mark.parametrize('input_type', [('v0', 'e0', 'v0')])
 def test_dist_link_neighbor_loader_hetero(
     tmp_path,
     num_parts,
     num_workers,
     async_sampling,
     neg_ratio,
-    edge_type,
+    input_type,
 ):
     mp_context = torch.multiprocessing.get_context('spawn')
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -241,13 +241,13 @@ def test_dist_link_neighbor_loader_hetero(
     w0 = mp_context.Process(
         target=dist_link_neighbor_loader_hetero,
         args=(tmp_path, num_parts, 0, addr, port, num_workers, async_sampling,
-              neg_ratio, edge_type),
+              neg_ratio, input_type),
     )
 
     w1 = mp_context.Process(
         target=dist_link_neighbor_loader_hetero,
         args=(tmp_path, num_parts, 1, addr, port, num_workers, async_sampling,
-              neg_ratio, edge_type),
+              neg_ratio, input_type),
     )
 
     w0.start()

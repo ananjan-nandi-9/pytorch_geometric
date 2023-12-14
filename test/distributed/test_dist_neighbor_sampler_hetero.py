@@ -230,10 +230,10 @@ def dist_neighbor_sampler_temporal_hetero(
 @pytest.mark.parametrize('disjoint', [False, True])
 def test_dist_neighbor_sampler_hetero(tmp_path, disjoint):
     mp_context = torch.multiprocessing.get_context('spawn')
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1)
+        s.bind(('127.0.0.1', 0))
+        port = s.getsockname()[1]
 
     world_size = 2
     data = FakeHeteroDataset(
@@ -273,10 +273,10 @@ def test_dist_neighbor_sampler_temporal_hetero(tmp_path, seed_time,
         seed_time = torch.tensor(seed_time)
 
     mp_context = torch.multiprocessing.get_context('spawn')
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1)
+        s.bind(('127.0.0.1', 0))
+        port = s.getsockname()[1]
 
     world_size = 2
     data = FakeHeteroDataset(
@@ -322,15 +322,15 @@ def test_dist_neighbor_sampler_edge_level_temporal_hetero(
     seed_time = torch.tensor(seed_time)
 
     mp_context = torch.multiprocessing.get_context('spawn')
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1)
+        s.bind(('127.0.0.1', 0))
+        port = s.getsockname()[1]
 
     world_size = 2
     data = FakeHeteroDataset(
         num_graphs=1,
-        avg_num_nodes=10,
+        avg_num_nodes=100,
         avg_degree=3,
         num_node_types=2,
         num_edge_types=4,

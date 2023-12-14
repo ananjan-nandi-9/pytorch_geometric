@@ -13,49 +13,26 @@ from torch_geometric.typing import EdgeType, NodeType, OptTensor
 from torch_geometric.utils.mixin import CastMixin
 
 
-@dataclass(init=False)
+@dataclass
 class DistEdgeHeteroSamplerInput(CastMixin):
     r"""The sampling input of
     :meth:`~torch_geometric.dstributed.DistNeighborSampler.node_sample` used
-    during distributed heterogeneous link sampling.
+    during distributed heterogeneous link sampling when src and dst node types
+    of an input edge are different.
 
     Args:
         input_id (torch.Tensor, optional): The indices of the data loader input
             of the current mini-batch.
         node_dict (Dict[NodeType, torch.Tensor]): The indices of seed nodes of
-            a given node types to start sampling from.
+            an given node types to start sampling from.
         time_dict (Dict[NodeType, torch.Tensor], optional): The timestamp for
-            the seed nodes of a given nonde types. (default: :obj:`None`)
+            the seed nodes of a given node types. (default: :obj:`None`)
         input_type (str, optional): The input node type. (default: :obj:`None`)
     """
     input_id: OptTensor
     node_dict: Dict[NodeType, Tensor]
     time_dict: Optional[Dict[NodeType, Tensor]] = None
     input_type: Optional[NodeType] = None
-
-    def __init__(
-        self,
-        input_id: OptTensor,
-        node_dict: Dict[NodeType, Tensor],
-        time_dict: Optional[Dict[NodeType, Tensor]] = None,
-        input_type: Optional[NodeType] = None,
-    ):
-        if input_id is not None:
-            input_id = input_id.cpu()
-        node_dict = {
-            node_type: node.cpu()
-            for node_type, node in node_dict.items()
-        }
-        if time_dict is not None:
-            time_dict = {
-                node_type: time.cpu()
-                for node_type, time in time_dict.items()
-            }
-
-        self.input_id = input_id
-        self.node_dict = node_dict
-        self.time_dict = time_dict
-        self.input_type = input_type
 
 
 class NodeDict:

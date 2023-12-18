@@ -193,11 +193,10 @@ def run(args: argparse.ArgumentParser):
                             model = ipex.optimize(model)
 
                         # Define context manager parameters:
-                        if args.cpu_affinity and with_loader:
-                            cpu_affinity = subgraph_loader.enable_cpu_affinity(
-                                args.loader_cores)
-                        else:
-                            cpu_affinity = nullcontext()
+                        cpu_affinity = subgraph_loader.enable_cpu_affinity(
+                            args.loader_cores
+                        ) if args.cpu_affinity else nullcontext()
+                        multithreading = subgraph_loader.enable_multithreading(args.loader_threads) if args.multithreading else nullcontext()
                         if args.profile and args.device == 'xpu':
                             profile = xpu_profile(args.export_chrome_trace)
                         elif args.profile:
@@ -211,7 +210,7 @@ def run(args: argparse.ArgumentParser):
                         if args.full_batch and args.use_sparse_tensor:
                             data = transformation(data)
 
-                        with cpu_affinity, amp, timeit() as time:
+                        with cpu_affinity, multithreading, amp, timeit() as time:
                             inference_kwargs = dict(cache=args.cached_loader)
                             if args.reuse_device_for_embeddings and not hetero:
                                 inference_kwargs['embedding_device'] = device
@@ -295,6 +294,7 @@ def run(args: argparse.ArgumentParser):
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser('GNN inference benchmark')
     add = argparser.add_argument
+    torch.multiprocessing.set_start_method('spawn')
 
     add('--device', choices=['cpu', 'cuda', 'xpu'], default='cpu',
         help='Device to run benchmark on')
@@ -327,6 +327,8 @@ if __name__ == '__main__':
         help='Use DataLoader affinitzation.')
     add('--loader-cores', nargs='+', default=[], type=int,
         help="List of CPU core IDs to use for DataLoader workers")
+    add('--multithreading', action='store_true', )
+    add('--loader-threads', default=1, type=int,  )
     add('--measure-load-time', action='store_true')
     add('--full-batch', action='store_true', help='Use full batch mode')
     add('--evaluate', action='store_true')

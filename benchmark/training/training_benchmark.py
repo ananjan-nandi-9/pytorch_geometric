@@ -27,6 +27,13 @@ from torch_geometric.profile import (
     xpu_profile,
 )
 
+
+import logging
+
+logging.basicConfig(
+    format='%(levelname)s:%(process)d:%(message)s', level=logging.DEBUG
+)
+
 supported_sets = {
     'ogbn-mag': ['rgat', 'rgcn'],
     'ogbn-products': ['edge_cnn', 'gat', 'gcn', 'pna', 'sage'],
@@ -243,8 +250,8 @@ def run(args: argparse.ArgumentParser):
                         cpu_affinity = subgraph_loader.enable_cpu_affinity(
                             args.loader_cores
                         ) if args.cpu_affinity else nullcontext()
-
-                        with amp, cpu_affinity:
+                        multithreading = subgraph_loader.enable_multithreading(args.loader_threads) if args.multithreading else nullcontext()
+                        with amp, cpu_affinity, multithreading:
                             for _ in range(args.warmup):
                                 train(
                                     model,
@@ -338,7 +345,8 @@ def run(args: argparse.ArgumentParser):
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser('GNN training benchmark')
     add = argparser.add_argument
-
+    torch.multiprocessing.set_start_method('spawn')
+    
     add('--device', choices=['cpu', 'cuda', 'mps', 'xpu'], default='cpu',
         help='Device to run benchmark on')
     add('--datasets', nargs='+',
@@ -371,6 +379,8 @@ if __name__ == '__main__':
         help="Use DataLoader affinitzation.")
     add('--loader-cores', nargs='+', default=[], type=int,
         help="List of CPU core IDs to use for DataLoader workers.")
+    add('--multithreading', action='store_true', )
+    add('--loader-threads', default=1, type=int,  )
     add('--measure-load-time', action='store_true')
     add('--evaluate', action='store_true')
     add('--write-csv', choices=[None, 'bench', 'prof'], default=None,

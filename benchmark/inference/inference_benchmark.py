@@ -28,6 +28,11 @@ supported_sets = {
     'ogbn-products': ['edge_cnn', 'gat', 'gcn', 'pna', 'sage'],
     'Reddit': ['edge_cnn', 'gat', 'gcn', 'pna', 'sage'],
 }
+import logging
+
+logging.basicConfig(
+    format='%(levelname)s:%(process)d:%(message)s', level=logging.DEBUG
+)
 
 
 @torch.no_grad()
@@ -44,8 +49,9 @@ def run(args: argparse.ArgumentParser):
     csv_data = defaultdict(list)
 
     if args.write_csv == 'prof' and not args.profile:
-        warnings.warn("Cannot write profile data to CSV because profiling is "
-                      "disabled")
+        warnings.warn(
+            "Cannot write profile data to CSV because profiling is " "disabled"
+        )
 
     if args.device == 'xpu':
         try:
@@ -53,8 +59,9 @@ def run(args: argparse.ArgumentParser):
         except ImportError:
             raise RuntimeError('XPU device requires IPEX to be installed')
 
-    if ((args.device == 'cuda' and not torch.cuda.is_available())
-            or (args.device == 'xpu' and not torch.xpu.is_available())):
+    if (args.device == 'cuda' and not torch.cuda.is_available()) or (
+        args.device == 'xpu' and not torch.xpu.is_available()
+    ):
         raise RuntimeError(f'{args.device.upper()} is not available')
 
     if args.device == 'cuda' and args.full_batch:
@@ -65,14 +72,15 @@ def run(args: argparse.ArgumentParser):
     print('BENCHMARK STARTS')
     print(f'Running on {args.device.upper()}')
     for dataset_name in args.datasets:
-        assert dataset_name in supported_sets.keys(
+        assert (
+            dataset_name in supported_sets.keys()
         ), f"Dataset {dataset_name} isn't supported."
         print(f'Dataset: {dataset_name}')
         load_time = timeit() if args.measure_load_time else nullcontext()
         with load_time:
-            result = get_dataset_with_transformation(dataset_name, args.root,
-                                                     args.use_sparse_tensor,
-                                                     args.bf16)
+            result = get_dataset_with_transformation(
+                dataset_name, args.root, args.use_sparse_tensor, args.bf16
+            )
             dataset, num_classes, transformation = result
         data = dataset.to(device)
         hetero = True if dataset_name == 'ogbn-mag' else False
@@ -97,38 +105,53 @@ def run(args: argparse.ArgumentParser):
             print('XPU device requires warmup - setting warmup=1')
             args.warmup = 1
 
-        inputs_channels = data[
-            'paper'].num_features if dataset_name == 'ogbn-mag' \
+        inputs_channels = (
+            data['paper'].num_features
+            if dataset_name == 'ogbn-mag'
             else dataset.num_features
+        )
 
         for model_name in args.models:
             if model_name not in supported_sets[dataset_name]:
-                print(f'Configuration of {dataset_name} + {model_name} '
-                      f'not supported. Skipping.')
+                print(
+                    f'Configuration of {dataset_name} + {model_name} '
+                    f'not supported. Skipping.'
+                )
                 continue
-            with_loader = not args.full_batch or (model_name == 'pna'
-                                                  and degree is None)
+            with_loader = not args.full_batch or (
+                model_name == 'pna' and degree is None
+            )
             print(f'Evaluation bench for {model_name}:')
 
             for batch_size in args.eval_batch_sizes:
-                num_nodes = data[
-                    'paper'].num_nodes if hetero else data.num_nodes
-                sampler = torch.utils.data.RandomSampler(
-                    range(num_nodes), num_samples=args.num_steps * batch_size
-                ) if args.num_steps != -1 and with_loader else None
+                num_nodes = (
+                    data['paper'].num_nodes if hetero else data.num_nodes
+                )
+                sampler = (
+                    torch.utils.data.RandomSampler(
+                        range(num_nodes),
+                        num_samples=args.num_steps * batch_size,
+                    )
+                    if args.num_steps != -1 and with_loader
+                    else None
+                )
                 kwargs = {
                     'batch_size': batch_size,
                     'shuffle': False,
                     'num_workers': args.num_workers,
                 }
                 if not hetero:
-                    subgraph_loader = NeighborLoader(
-                        data,
-                        num_neighbors=[-1],  # layer-wise inference
-                        input_nodes=mask,
-                        sampler=sampler,
-                        **kwargs,
-                    ) if with_loader else None
+                    subgraph_loader = (
+                        NeighborLoader(
+                            data,
+                            num_neighbors=[-1],  # layer-wise inference
+                            input_nodes=mask,
+                            sampler=sampler,
+                            **kwargs,
+                        )
+                        if with_loader
+                        else None
+                    )
                     if args.evaluate and not args.full_batch:
                         test_loader = NeighborLoader(
                             data,
@@ -142,13 +165,17 @@ def run(args: argparse.ArgumentParser):
                     num_neighbors = [args.hetero_num_neighbors] * layers
                     if hetero:
                         # batch-wise inference
-                        subgraph_loader = NeighborLoader(
-                            data,
-                            num_neighbors=num_neighbors,
-                            input_nodes=mask,
-                            sampler=sampler,
-                            **kwargs,
-                        ) if with_loader else None
+                        subgraph_loader = (
+                            NeighborLoader(
+                                data,
+                                num_neighbors=num_neighbors,
+                                input_nodes=mask,
+                                sampler=sampler,
+                                **kwargs,
+                            )
+                            if with_loader
+                            else None
+                        )
                         if args.evaluate and not args.full_batch:
                             test_loader = NeighborLoader(
                                 data,
@@ -160,11 +187,13 @@ def run(args: argparse.ArgumentParser):
 
                     for hidden_channels in args.num_hidden_channels:
                         print('----------------------------------------------')
-                        print(f'Batch size={batch_size}, '
-                              f'Layers amount={layers}, '
-                              f'Num_neighbors={num_neighbors}, '
-                              f'Hidden features size={hidden_channels}, '
-                              f'Sparse tensor={args.use_sparse_tensor}')
+                        print(
+                            f'Batch size={batch_size}, '
+                            f'Layers amount={layers}, '
+                            f'Num_neighbors={num_neighbors}, '
+                            f'Hidden features size={hidden_channels}, '
+                            f'Sparse tensor={args.use_sparse_tensor}'
+                        )
                         params = {
                             'inputs_channels': inputs_channels,
                             'hidden_channels': hidden_channels,
@@ -176,13 +205,16 @@ def run(args: argparse.ArgumentParser):
                         if model_name == 'pna':
                             if degree is None:
                                 degree = PNAConv.get_degree_histogram(
-                                    subgraph_loader)
+                                    subgraph_loader
+                                )
                                 print(f'Calculated degree for {dataset_name}.')
                             params['degree'] = degree
 
                         model = get_model(
-                            model_name, params,
-                            metadata=data.metadata() if hetero else None)
+                            model_name,
+                            params,
+                            metadata=data.metadata() if hetero else None,
+                        )
                         model = model.to(device)
                         # TODO: Migrate to ModelHubMixin.
                         if args.ckpt_path:
@@ -193,24 +225,40 @@ def run(args: argparse.ArgumentParser):
                             model = ipex.optimize(model)
 
                         # Define context manager parameters:
-                        cpu_affinity = subgraph_loader.enable_cpu_affinity(
-                            args.loader_cores
-                        ) if args.cpu_affinity else nullcontext()
-                        multithreading = subgraph_loader.enable_multithreading(args.loader_threads) if args.multithreading else nullcontext()
+                        cpu_affinity = (
+                            subgraph_loader.enable_cpu_affinity(
+                                args.loader_cores
+                            )
+                            if args.cpu_affinity
+                            else nullcontext()
+                        )
+                        multithreading = (
+                            subgraph_loader.enable_multithreading(
+                                args.loader_threads
+                            )
+                            if args.multithreading
+                            else nullcontext()
+                        )
                         if args.profile and args.device == 'xpu':
                             profile = xpu_profile(args.export_chrome_trace)
                         elif args.profile:
-                            profile = torch_profile(args.export_chrome_trace,
-                                                    csv_data, args.write_csv)
+                            profile = torch_profile(
+                                args.export_chrome_trace,
+                                csv_data,
+                                args.write_csv,
+                            )
                         else:
                             profile = nullcontext()
-                        itt = emit_itt(
-                        ) if args.vtune_profile else nullcontext()
+                        itt = (
+                            emit_itt() if args.vtune_profile else nullcontext()
+                        )
 
                         if args.full_batch and args.use_sparse_tensor:
                             data = transformation(data)
 
-                        with cpu_affinity, multithreading, amp, timeit() as time:
+                        with (
+                            cpu_affinity
+                        ), multithreading, amp, timeit() as time:
                             inference_kwargs = dict(cache=args.cached_loader)
                             if args.reuse_device_for_embeddings and not hetero:
                                 inference_kwargs['embedding_device'] = device
@@ -232,10 +280,14 @@ def run(args: argparse.ArgumentParser):
                                     if args.evaluate:
                                         mask = data.test_mask
                                         pred = y[mask].argmax(1)
-                                        test_acc = pred.eq(data.y[mask]).sum(
-                                        ).item() / mask.sum().item()
-                                        print(f'Full Batch Test Accuracy: \
-                                            {test_acc:.4f}')
+                                        test_acc = (
+                                            pred.eq(data.y[mask]).sum().item()
+                                            / mask.sum().item()
+                                        )
+                                        print(
+                                            f'Full Batch Test Accuracy: \
+                                            {test_acc:.4f}'
+                                        )
                                 else:
                                     y = model.inference(
                                         subgraph_loader,
@@ -251,14 +303,20 @@ def run(args: argparse.ArgumentParser):
                                             hetero,
                                             progress_bar=True,
                                         )
-                                        print(f'Mini Batch Test Accuracy: \
-                                            {test_acc:.4f}')
+                                        print(
+                                            f'Mini Batch Test Accuracy: \
+                                            {test_acc:.4f}'
+                                        )
 
                         if args.profile and args.export_chrome_trace:
-                            rename_profile_file(model_name, dataset_name,
-                                                str(batch_size), str(layers),
-                                                str(hidden_channels),
-                                                str(num_neighbors))
+                            rename_profile_file(
+                                model_name,
+                                dataset_name,
+                                str(batch_size),
+                                str(layers),
+                                str(hidden_channels),
+                                str(num_neighbors),
+                            )
                         total_time = time.duration
                         if args.num_steps != -1:
                             total_num_samples = args.num_steps * batch_size
@@ -296,46 +354,107 @@ if __name__ == '__main__':
     add = argparser.add_argument
     torch.multiprocessing.set_start_method('spawn')
 
-    add('--device', choices=['cpu', 'cuda', 'xpu'], default='cpu',
-        help='Device to run benchmark on')
-    add('--reuse-device-for-embeddings', action='store_true',
-        help='Use the same device for embeddings as specified in "--device"')
-    add('--datasets', nargs='+',
-        default=['ogbn-mag', 'ogbn-products', 'Reddit'], type=str)
-    add('--use-sparse-tensor', action='store_true',
-        help='use torch_sparse.SparseTensor as graph storage format')
-    add('--models', nargs='+',
-        default=['edge_cnn', 'gat', 'gcn', 'pna', 'rgat', 'rgcn'], type=str)
-    add('--root', default='../../data', type=str,
-        help='relative path to look for the datasets')
-    add('--eval-batch-sizes', nargs='+', default=[512, 1024, 2048, 4096, 8192],
-        type=int)
+    add(
+        '--device',
+        choices=['cpu', 'cuda', 'xpu'],
+        default='cpu',
+        help='Device to run benchmark on',
+    )
+    add(
+        '--reuse-device-for-embeddings',
+        action='store_true',
+        help='Use the same device for embeddings as specified in "--device"',
+    )
+    add(
+        '--datasets',
+        nargs='+',
+        default=['ogbn-mag', 'ogbn-products', 'Reddit'],
+        type=str,
+    )
+    add(
+        '--use-sparse-tensor',
+        action='store_true',
+        help='use torch_sparse.SparseTensor as graph storage format',
+    )
+    add(
+        '--models',
+        nargs='+',
+        default=['edge_cnn', 'gat', 'gcn', 'pna', 'rgat', 'rgcn'],
+        type=str,
+    )
+    add(
+        '--root',
+        default='../../data',
+        type=str,
+        help='relative path to look for the datasets',
+    )
+    add(
+        '--eval-batch-sizes',
+        nargs='+',
+        default=[512, 1024, 2048, 4096, 8192],
+        type=int,
+    )
     add('--num-layers', nargs='+', default=[2, 3], type=int)
     add('--num-hidden-channels', nargs='+', default=[64, 128, 256], type=int)
-    add('--num-heads', default=2, type=int,
-        help='number of hidden attention heads, applies only for gat and rgat')
-    add('--hetero-num-neighbors', default=10, type=int,
-        help='number of neighbors to sample per layer for hetero workloads')
+    add(
+        '--num-heads',
+        default=2,
+        type=int,
+        help='number of hidden attention heads, applies only for gat and rgat',
+    )
+    add(
+        '--hetero-num-neighbors',
+        default=10,
+        type=int,
+        help='number of neighbors to sample per layer for hetero workloads',
+    )
     add('--num-workers', default=0, type=int)
-    add('--num-steps', default=-1, type=int,
-        help='number of steps, -1 means iterating through all the data')
+    add(
+        '--num-steps',
+        default=-1,
+        type=int,
+        help='number of steps, -1 means iterating through all the data',
+    )
     add('--warmup', default=1, type=int)
     add('--profile', action='store_true')
     add('--vtune-profile', action='store_true')
     add('--bf16', action='store_true')
-    add('--cpu-affinity', action='store_true',
-        help='Use DataLoader affinitzation.')
-    add('--loader-cores', nargs='+', default=[], type=int,
-        help="List of CPU core IDs to use for DataLoader workers")
-    add('--multithreading', action='store_true', )
-    add('--loader-threads', default=1, type=int,  )
+    add(
+        '--cpu-affinity',
+        action='store_true',
+        help='Use DataLoader affinitzation.',
+    )
+    add(
+        '--loader-cores',
+        nargs='+',
+        default=[],
+        type=int,
+        help="List of CPU core IDs to use for DataLoader workers",
+    )
+    add(
+        '--multithreading',
+        action='store_true',
+    )
+    add(
+        '--loader-threads',
+        default=1,
+        type=int,
+    )
     add('--measure-load-time', action='store_true')
     add('--full-batch', action='store_true', help='Use full batch mode')
     add('--evaluate', action='store_true')
     add('--ckpt_path', type=str, help='Checkpoint path for loading a model')
-    add('--write-csv', choices=[None, 'bench', 'prof'], default=None,
-        help='Write benchmark or PyTorch profile data to CSV')
-    add('--export-chrome-trace', default=True, type=bool,
-        help='Export chrome trace file. Works only with PyTorch profiler')
+    add(
+        '--write-csv',
+        choices=[None, 'bench', 'prof'],
+        default=None,
+        help='Write benchmark or PyTorch profile data to CSV',
+    )
+    add(
+        '--export-chrome-trace',
+        default=True,
+        type=bool,
+        help='Export chrome trace file. Works only with PyTorch profiler',
+    )
     add('--cached-loader', action='store_true', help='Use CachedLoader')
     run(argparser.parse_args())
